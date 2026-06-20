@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>台股專業分析</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#58a6ff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="台股分析">
+<link rel="apple-touch-icon" href="icon-192.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
 <style>
 :root{
@@ -1205,6 +1211,15 @@ async function analyzeAllWatch(){
 
 window.addEventListener('resize',()=>{ if(state.chart)state.chart.resize(); if(state.idxChart)state.idxChart.resize(); });
 init();
+
+/* PWA Service Worker 註冊 */
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js')
+      .then(r=>console.log('SW 已註冊:', r.scope))
+      .catch(e=>console.log('SW 註冊失敗:', e));
+  });
+}
 </script>
 </body>
 </html>

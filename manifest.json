@@ -1,0 +1,26 @@
+{
+  "name": "台股專業分析",
+  "short_name": "台股分析",
+  "description": "台股 K 線、技術指標、法人籌碼、AI 評分一站式分析",
+  "start_url": "/twstock/台股分析.html",
+  "scope": "/twstock/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d1117",
+  "theme_color": "#58a6ff",
+  "lang": "zh-TW",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
