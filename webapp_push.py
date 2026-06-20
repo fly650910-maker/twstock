@@ -136,6 +136,23 @@ def _build_weekly_report(codes) -> str:
         return ""
 
 
+def _build_today_events(codes) -> str:
+    """早盤：抓今日及未來3天的除權息事件。"""
+    try:
+        events = fetch_dividend_calendar(codes, days_ahead=3)
+        if not events:
+            return ""
+        today = date.today()
+        lines = []
+        for e in events:
+            label = "今日" if e["date"] == today else f"{e['date'].strftime('%m/%d')}"
+            lines.append(f"  {label} {e['name']}（{e['code']}）除權息 {e['dividend']}")
+        return "📋 近期除權息\n" + "\n".join(lines)
+    except Exception as e:
+        logger.debug(f"今日事件抓取失敗: {e}")
+        return ""
+
+
 def _send_with_retry(token, chat_id, caption, filepath, max_retry=3) -> bool:
     for attempt in range(1, max_retry + 1):
         try:
@@ -200,11 +217,14 @@ def push_webapp(session: str = "收盤分析") -> bool:
         pass
 
     # 抓各類資料
-    taiex   = fetch_taiex()
-    prices  = fetch_stock_prices(codes)
-    us_line = _fetch_us_summary()
-    pnl_str = _build_holding_pnl(prices)
-    weekly  = _build_weekly_report(codes)
+    taiex    = fetch_taiex()
+    prices   = fetch_stock_prices(codes)
+    us_line  = _fetch_us_summary()
+    pnl_str  = _build_holding_pnl(prices)
+    weekly   = _build_weekly_report(codes)
+    # 今日重點事件（除權息）— 只在早盤推播時附上
+    is_morning = "早盤" in session
+    today_events = _build_today_events(codes) if is_morning else ""
 
     # 組合 caption
     now = datetime.now().strftime("%m/%d %H:%M")
@@ -230,6 +250,10 @@ def push_webapp(session: str = "收盤分析") -> bool:
             lines.append(f"  {p['name']} {arrow}{abs(p['pct']):.1f}%（{p['close']}）")
         if lines:
             caption += "\n\n📈 自選股\n" + "\n".join(lines)
+
+    # 今日重點事件（早盤）
+    if today_events:
+        caption += f"\n\n{today_events}"
 
     # 持倉損益
     if pnl_str:
