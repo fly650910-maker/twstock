@@ -1638,12 +1638,9 @@ function drawChart(rawHist,a){
   const {ma5,ma10,ma20,ma60,BB,M,KDv,R,SR}=_a.series;
   const startPct=(hist.length-n)/hist.length*100;
 
-  // 籌碼山（側面顯示）
-  if(state.showChipMtn){
-    renderChipMountain(state.current||{}, rawHist);
-  } else {
-    const cpEl=document.getElementById('chipMtnPanel'); if(cpEl) cpEl.style.display='none';
-  }
+  // 籌碼山：疊合在 K 線圖右側（隱藏舊的獨立 panel）
+  const cpEl=document.getElementById('chipMtnPanel'); if(cpEl) cpEl.style.display='none';
+  const chipData=state.showChipMtn ? calcChipMountain(rawHist) : null;
 
   // 缺口偵測
   const gaps=detectGaps(hist);
@@ -1708,7 +1705,7 @@ function drawChart(rawHist,a){
     legend:{top:0,textStyle:{color:'#8b949e'},data:['K線','MA5','MA10','MA20','MA60'].concat(state.showBB?['BB上軌','BB下軌']:[]).concat(indLegend)},
     tooltip:{trigger:'axis',axisPointer:{type:'cross'},backgroundColor:'#1c2330',borderColor:'#2d333b',textStyle:{color:'#e6edf3',fontSize:12}},
     axisPointer:{link:[{xAxisIndex:'all'}]},
-    grid:[{left:64,right:16,top:32,height:'44%'},{left:64,right:16,top:'56%',height:'11%'},{left:64,right:16,top:'71%',height:'17%'}],
+    grid:[{left:64,right:chipData?80:16,top:32,height:'44%'},{left:64,right:chipData?80:16,top:'56%',height:'11%'},{left:64,right:chipData?80:16,top:'71%',height:'17%'}],
     xAxis:[0,1,2].map(i=>({type:'category',gridIndex:i,data:dates,boundaryGap:true,
       axisLine:{lineStyle:{color:'#2d333b'}},axisLabel:i===2?{color:'#8b949e'}:{show:false},axisTick:{show:false}})),
     yAxis:[
@@ -1733,7 +1730,66 @@ function drawChart(rawHist,a){
       {name:'成交量',type:'bar',xAxisIndex:1,yAxisIndex:1,data:vols},
       {name:'量MA5',type:'line',xAxisIndex:1,yAxisIndex:1,data:volMa5,symbol:'none',lineStyle:{width:1,color:'#d29922',opacity:0.8}},
       {name:'量MA20',type:'line',xAxisIndex:1,yAxisIndex:1,data:volMa20,symbol:'none',lineStyle:{width:1,color:'#58a6ff',opacity:0.8}}
-    ]).concat(indSeries)
+    ]).concat(indSeries).concat(chipData ? (()=>{
+      // 籌碼山疊圖：用 custom series，在 K 線圖右側繪製橫向量柱
+      const maxBkt=Math.max(...chipData.buckets)||1;
+      const chipSeries={
+        name:'籌碼山',
+        type:'custom',
+        yAxisIndex:0,
+        xAxisIndex:0,
+        z:1,
+        silent:true,
+        renderItem(params,api){
+          // 在 grid 右側外層繪製橫條（畫布座標）
+          const gridRect=params.coordSys;
+          const rightEdge=gridRect.x+gridRect.width;
+          const maxBarWidth=76; // px
+          const totalBins=chipData.labels.length;
+          const results=[];
+          for(let bi=0;bi<totalBins;bi++){
+            const price=chipData.labels[bi];
+            const vol=chipData.buckets[bi];
+            const step=(chipData.maxP-chipData.minP)/totalBins;
+            // 用 api.coord 將價格轉成 Y 畫素
+            const yMid=api.coord([0,price])[1];
+            const yTop=api.coord([0,price+step*0.5])[1];
+            const yBot=api.coord([0,price-step*0.5])[1];
+            const barH=Math.max(1,Math.abs(yBot-yTop)-0.5);
+            const barW=Math.max(1,(vol/maxBkt)*maxBarWidth);
+            // 顏色
+            let fillColor;
+            if(chipData.vwap&&Math.abs(price-chipData.vwap)/chipData.vwap<0.015){
+              fillColor='rgba(88,166,255,0.55)';
+            } else if(price<chipData.curClose){
+              fillColor='rgba(63,185,80,0.45)';
+            } else {
+              fillColor='rgba(248,81,73,0.45)';
+            }
+            results.push({
+              type:'rect',
+              shape:{x:rightEdge+2,y:Math.min(yTop,yBot),width:barW,height:barH},
+              style:{fill:fillColor,stroke:'none'},
+              styleEmphasis:{fill:fillColor}
+            });
+          }
+          // VWAP 橫線
+          if(chipData.vwap){
+            const yVwap=api.coord([0,chipData.vwap])[1];
+            results.push({type:'line',shape:{x1:rightEdge+2,y1:yVwap,x2:rightEdge+maxBarWidth+2,y2:yVwap},
+              style:{stroke:'#58a6ff',lineWidth:1.5}});
+          }
+          // 現價橫線
+          const yNow=api.coord([0,chipData.curClose])[1];
+          results.push({type:'line',shape:{x1:rightEdge+2,y1:yNow,x2:rightEdge+maxBarWidth+2,y2:yNow},
+            style:{stroke:'#d29922',lineWidth:1.5,lineDash:[4,2]}});
+          return {type:'group',children:results};
+        },
+        // data 需有一個 dummy 點讓系列被渲染
+        data:[[dates[0]||0, chipData.labels[0]||0]]
+      };
+      return [chipSeries];
+    })() : [])
   });
   const i=close.length-1, sig=[];
   if(_a.rsi!=null) sig.push('RSI14='+fmt(_a.rsi,1)+(_a.rsi>70?'（超買）':_a.rsi<30?'（超賣）':''));
