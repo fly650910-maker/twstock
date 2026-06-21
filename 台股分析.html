@@ -265,7 +265,12 @@ input[type=number]:focus{outline:none;border-color:var(--accent)}
         <button class="btn" onclick="toggleWatchSort()" id="watchSortBtn">↕ 漲幅排行</button>
         <span class="progress" id="watchProgress"></span>
       </div>
-      <div id="watchBody" style="margin-top:14px"></div>
+      <div style="margin-top:8px">
+        <input type="text" id="watchFilter" placeholder="🔍 快速過濾（代號或名稱）" autocomplete="off"
+          oninput="filterWatch(this.value)"
+          style="width:100%;max-width:280px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 12px;font-size:13px">
+      </div>
+      <div id="watchBody" style="margin-top:10px"></div>
       <div id="watchCards" class="watch-cards" style="margin-top:8px"></div>
       <div class="muted" style="margin-top:8px">AI 評分為簡化版規則評分（技術面+估值），參考本機台股AI分析系統之評分架構；不含法人籌碼與宏觀環境訊號。</div>
     </div>
@@ -1069,7 +1074,24 @@ function renderPortfolio(){
   const stoploss={};
   try{ const v=JSON.parse(localStorage.getItem('tw_stoploss')); if(v) Object.assign(stoploss,v); }catch(e){}
 
-  let totalCost=0, totalMktVal=0, totalPnl=0, havePrice=0;
+  // 計算平均成本（從交易記錄反推）
+  function _calcAvgCost(code){
+    const logs=_getTradeLog(code);
+    let totalShares=0, totalAmt=0, realizedPnl=0;
+    logs.slice().reverse().forEach(l=>{
+      const p=parseFloat(l.price)||0, s=parseInt(l.shares)||0;
+      if(l.action==='買進'){ totalAmt+=p*s; totalShares+=s; }
+      else if(l.action==='賣出'&&totalShares>0){
+        const avgCost=totalAmt/totalShares;
+        realizedPnl+=(p-avgCost)*s;
+        totalAmt-=avgCost*Math.min(s,totalShares);
+        totalShares=Math.max(0,totalShares-s);
+      }
+    });
+    return { avgCost:totalShares>0?(totalAmt/totalShares):null, holdShares:totalShares, realizedPnl };
+  }
+
+  let totalCost=0, totalMktVal=0, totalPnl=0, totalRealizedPnl=0, havePrice=0;
   let cardsHtml='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px">';
 
   codes.forEach(code=>{
@@ -1081,11 +1103,19 @@ function renderPortfolio(){
     const d=state.map[code];
     const price=d?d.close:null;
     const name=d?d.name:code;
-    const pnl=price!=null?(price-cost)*shares:null;
-    const pct=price!=null?((price-cost)/cost*100):null;
-    const mktVal=price!=null?(price*shares):null;
 
-    if(mktVal!==null){ totalCost+=cost*shares; totalMktVal+=mktVal; totalPnl+=pnl; havePrice++; }
+    // 從交易記錄計算平均成本
+    const calc=_calcAvgCost(code);
+    const displayCost=calc.avgCost!=null?calc.avgCost:cost;
+    const displayShares=calc.holdShares>0?calc.holdShares:shares;
+
+    const pnl=price!=null?(price-displayCost)*displayShares:null;
+    const pct=price!=null?((price-displayCost)/displayCost*100):null;
+    const mktVal=price!=null?(price*displayShares):null;
+    const realPnl=calc.realizedPnl||0;
+
+    if(mktVal!==null){ totalCost+=displayCost*displayShares; totalMktVal+=mktVal; totalPnl+=pnl; havePrice++; }
+    totalRealizedPnl+=realPnl;
 
     // 停損停利狀態
     const sl=stoploss[code]||{};
@@ -1100,7 +1130,9 @@ function renderPortfolio(){
     const pctDisp=pct!=null?((pct>=0?'+':'')+pct.toFixed(2)+'%'):'—';
     const pnlDisp=pnl!=null?((pnl>=0?'+':'')+Math.round(pnl).toLocaleString()):'—';
     const mktValDisp=mktVal!=null?((mktVal/10000).toFixed(1)+'萬'):'—';
-    const costTotal=(cost*shares/10000).toFixed(1);
+    const costTotal=(displayCost*displayShares/10000).toFixed(1);
+    const avgCostDisp=calc.avgCost!=null?calc.avgCost.toFixed(2)+'（記錄）':cost.toFixed(2);
+    const realPnlColor=realPnl>=0?'var(--up)':'var(--dn)';
 
     // 買賣記錄
     const logs=_getTradeLog(code);
@@ -1130,11 +1162,12 @@ function renderPortfolio(){
       </div>
       <!-- 數據格 -->
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:13px;margin-bottom:10px">
-        <div><div style="color:var(--muted);font-size:11px">成本價</div><div>${cost}</div></div>
-        <div><div style="color:var(--muted);font-size:11px">持股</div><div>${shares.toLocaleString()}</div></div>
+        <div><div style="color:var(--muted);font-size:11px">平均成本</div><div>${avgCostDisp}</div></div>
+        <div><div style="color:var(--muted);font-size:11px">持股</div><div>${displayShares.toLocaleString()}</div></div>
         <div><div style="color:var(--muted);font-size:11px">成本市值</div><div>${costTotal}萬</div></div>
         <div><div style="color:var(--muted);font-size:11px">現值市值</div><div>${mktValDisp}</div></div>
-        <div colspan="2"><div style="color:var(--muted);font-size:11px">損益</div><div style="color:${pnlColor};font-weight:600">${pnlDisp}元</div></div>
+        <div><div style="color:var(--muted);font-size:11px">未實現損益</div><div style="color:${pnlColor};font-weight:600">${pnlDisp}</div></div>
+        <div><div style="color:var(--muted);font-size:11px">已實現損益</div><div style="color:${realPnl?realPnlColor:'var(--muted)'}">${realPnl?(realPnl>=0?'+':'')+Math.round(realPnl).toLocaleString():'—'}</div></div>
       </div>
       <!-- 停損停利設定 -->
       <div style="border-top:1px solid var(--border);padding-top:8px;margin-bottom:6px">
@@ -1173,15 +1206,20 @@ function renderPortfolio(){
   const totalPct=totalCost?((totalPnl/totalCost)*100):0;
   const sumColor=totalPnl>=0?'var(--up)':'var(--dn)';
   const sumSign=totalPnl>=0?'+':'';
+  const realColor=totalRealizedPnl>=0?'var(--up)':'var(--dn)';
   sumEl.innerHTML=`<div style="background:var(--panel2);border-radius:12px;padding:16px 20px;display:flex;flex-wrap:wrap;gap:24px;align-items:center;margin-bottom:4px">
     <div>
-      <div style="font-size:12px;color:var(--muted)">總損益</div>
+      <div style="font-size:12px;color:var(--muted)">未實現損益</div>
       <div style="font-size:28px;font-weight:700;color:${sumColor}">${sumSign}${Math.round(totalPnl).toLocaleString()}元</div>
     </div>
     <div>
       <div style="font-size:12px;color:var(--muted)">報酬率</div>
       <div style="font-size:22px;font-weight:600;color:${sumColor}">${sumSign}${totalPct.toFixed(2)}%</div>
     </div>
+    ${totalRealizedPnl?`<div>
+      <div style="font-size:12px;color:var(--muted)">已實現損益</div>
+      <div style="font-size:20px;font-weight:600;color:${realColor}">${totalRealizedPnl>=0?'+':''}${Math.round(totalRealizedPnl).toLocaleString()}元</div>
+    </div>`:''}
     <div>
       <div style="font-size:12px;color:var(--muted)">現值市值</div>
       <div style="font-size:18px;font-weight:600">${(totalMktVal/10000).toFixed(1)}萬</div>
@@ -1757,6 +1795,13 @@ function renderWatch(){
   let orderedWatch=state.watch.slice();
   if(_watchSortMode){
     orderedWatch=orderedWatch.filter(c=>state.map[c]).sort((a,b)=>pctOf(state.map[b])-pctOf(state.map[a]));
+  }
+  // 快速過濾
+  if(_watchFilter){
+    orderedWatch=orderedWatch.filter(c=>{
+      const s=state.map[c];
+      return c.includes(_watchFilter)||(s&&s.name&&s.name.toLowerCase().includes(_watchFilter));
+    });
   }
 
   let bodyHtml='';
@@ -2695,10 +2740,15 @@ async function loadStockNews(code){
    自選股漲幅排行切換
 ═══════════════════════════════════════════════════════════════ */
 let _watchSortMode=false;
+let _watchFilter='';
 function toggleWatchSort(){
   _watchSortMode=!_watchSortMode;
   const btn=document.getElementById('watchSortBtn');
   if(btn) btn.classList.toggle('active',_watchSortMode);
+  renderWatch();
+}
+function filterWatch(q){
+  _watchFilter=(q||'').trim().toLowerCase();
   renderWatch();
 }
 

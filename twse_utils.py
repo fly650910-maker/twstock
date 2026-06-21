@@ -199,7 +199,36 @@ def clean_old_logs(log_dir, days=7):
         logger.debug(f"log 清理失敗: {e}")
 
 
-def fetch_volume_ma(code: str, days: int = 20) -> float | None:
+def fetch_stock_ohlc(code: str, months: int = 4) -> list:
+    """
+    抓個股近 months 個月的日K資料。
+    回傳 list of [date_str, open, high, low, close, vol]（皆為 float/int）。
+    """
+    now = datetime.now()
+    rows = []
+    for i in range(months - 1, -1, -1):
+        month = now.month - i
+        year  = now.year
+        while month <= 0:
+            month += 12
+            year  -= 1
+        ds = f"{year}{month:02d}01"
+        try:
+            url = f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date={ds}&stockNo={code}&response=json"
+            data = _get(url)
+            if data and data.get("stat") == "OK" and data.get("data"):
+                for row in data["data"]:
+                    try:
+                        close = float(str(row[6]).replace(",", ""))
+                        rows.append(close)
+                    except Exception:
+                        continue
+        except Exception:
+            continue
+    return rows
+
+
+def fetch_volume_ma(code: str, days: int = 20):
     """
     抓個股近 N 日成交量均值（股數），用於爆量偵測。
     抓最近兩個月的月成交資料，取最後 days 筆平均。

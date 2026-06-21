@@ -155,6 +155,84 @@ def check_stoploss_alerts(prices: dict) -> list:
     return alerts
 
 
+def check_target_alerts(prices: dict) -> list:
+    """檢查自選股是否觸達到價目標，回傳警示清單。"""
+    cfg = load_config()
+    targets = cfg.get("targets", {})  # {"2330": 1000, "8033": 180}
+    if not targets:
+        return []
+    alerts = []
+    for code, target in targets.items():
+        p = prices.get(code)
+        if not p:
+            continue
+        price = p["close"]
+        name = p["name"]
+        try:
+            t = float(target)
+        except Exception:
+            continue
+        if price >= t:
+            alerts.append(f"🎯 到價提醒｜{name}({code}) 現價{price} ≥ 目標{t}")
+    return alerts
+
+
+def check_technical_alerts(codes: list, prices: dict) -> list:
+    """收盤技術面警示：KD死叉、MACD翻空、跌破季線（60MA）。"""
+    from twse_utils import fetch_stock_ohlc
+    alerts = []
+
+    def ema(s, n):
+        e = s[0]; k = 2 / (n + 1)
+        for v in s[1:]: e = v * k + e * (1 - k)
+        return e
+
+    def kd9(cls):
+        highs = [max(cls[i-8:i+1]) for i in range(8, len(cls))]
+        lows  = [min(cls[i-8:i+1]) for i in range(8, len(cls))]
+        K, D = 50.0, 50.0
+        for i in range(len(highs)):
+            r = (cls[i+8]-lows[i]) / (highs[i]-lows[i]+1e-9) * 100
+            K = K * 2/3 + r / 3; D = D * 2/3 + K / 3
+        return K, D
+
+    for code in codes:
+        p = prices.get(code)
+        if not p:
+            continue
+        try:
+            closes = fetch_stock_ohlc(code, months=4)
+            if not closes or len(closes) < 30:
+                continue
+
+            price = closes[-1]
+
+            # 季線（60MA）—需60筆
+            if len(closes) >= 61:
+                ma60      = sum(closes[-60:]) / 60
+                ma60_prev = sum(closes[-61:-1]) / 60
+                if price < ma60 and closes[-2] >= ma60_prev:
+                    alerts.append(f"📉 跌破季線｜{p['name']}({code}) 現{price:.2f} 季{ma60:.2f}")
+
+            # KD死叉（需17筆以上）
+            if len(closes) >= 17:
+                K,  D  = kd9(closes)
+                Kp, Dp = kd9(closes[:-1])
+                if K < D and Kp >= Dp and K < 50:
+                    alerts.append(f"📉 KD死叉｜{p['name']}({code}) K{K:.0f} D{D:.0f}")
+
+            # MACD翻空（需27筆）
+            if len(closes) >= 27:
+                macd_now  = ema(closes[-26:], 12) - ema(closes[-26:], 26)
+                macd_prev = ema(closes[-27:-1], 12) - ema(closes[-27:-1], 26)
+                if macd_now < 0 and macd_prev >= 0:
+                    alerts.append(f"📉 MACD翻空｜{p['name']}({code})")
+
+        except Exception as e:
+            logger.debug(f"技術警示 {code} 失敗: {e}")
+    return alerts
+
+
 def _build_today_events(codes) -> str:
     """早盤：抓今日及未來3天的除權息事件。"""
     try:
@@ -246,8 +324,10 @@ def push_webapp(session: str = "收盤分析") -> bool:
     is_close   = "收盤" in session
     today_events = _build_today_events(codes) if is_morning else ""
 
-    # 停損停利警示（收盤時檢查）
+    # 停損停利警示、到價提醒、技術面警示（收盤時檢查）
     sl_alerts = check_stoploss_alerts(prices) if is_close else []
+    target_alerts = check_target_alerts(prices) if is_close else []
+    tech_alerts = check_technical_alerts(codes, prices) if is_close else []
 
     # 組合 caption
     now = datetime.now().strftime("%m/%d %H:%M")
@@ -282,9 +362,14 @@ def push_webapp(session: str = "收盤分析") -> bool:
     if pnl_str:
         caption += f"\n\n{pnl_str}"
 
-    # 停損停利警示
-    if sl_alerts:
-        caption += "\n\n🚨 價格警示\n" + "\n".join(f"  {a}" for a in sl_alerts)
+    # 停損停利 + 到價提醒
+    all_price_alerts = sl_alerts + target_alerts
+    if all_price_alerts:
+        caption += "\n\n🚨 價格警示\n" + "\n".join(f"  {a}" for a in all_price_alerts)
+
+    # 技術面警示
+    if tech_alerts:
+        caption += "\n\n📊 技術警示\n" + "\n".join(f"  {a}" for a in tech_alerts)
 
     # 週報（週五收盤）
     if weekly:
