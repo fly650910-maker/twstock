@@ -55,11 +55,19 @@ def _fetch_us_summary() -> str:
 
 
 def _build_holding_pnl(prices: dict) -> str:
-    """計算持倉損益，從 config 讀取成本。"""
+    """計算持倉損益，優先從 config holdings，fallback 到程式碼預設。"""
     cfg = load_config()
     holdings = cfg.get("holdings", {})
+    # fallback：直接寫死的持倉（與 HTML 同步）
     if not holdings:
-        return ""
+        holdings = {
+            "2312": {"cost": 36.55,  "shares": 3000},
+            "2449": {"cost": 282.91, "shares": 2000},
+            "3706": {"cost": 94.73,  "shares": 4000},
+            "6285": {"cost": 289.7,  "shares": 2000},
+            "6667": {"cost": 272.09, "shares": 2000},
+            "8033": {"cost": 144.55, "shares": 5000},
+        }
     total_cost = 0
     total_pnl = 0
     lines = []
@@ -76,64 +84,75 @@ def _build_holding_pnl(prices: dict) -> str:
         total_cost += cost * shares
         total_pnl += pnl
         arrow = "▲" if pnl >= 0 else "▼"
-        lines.append(f"  {p['name']} {arrow}${abs(pnl):,.0f}（{abs(pct):.1f}%）")
+        lines.append(f"  {p['name']}({code}) {arrow}${abs(pnl):,.0f}（成本{cost} 現{p['close']} {'+' if pct>=0 else ''}{pct:.1f}%）")
     if not lines:
         return ""
     total_pct = total_pnl / total_cost * 100 if total_cost else 0
     arrow = "▲" if total_pnl >= 0 else "▼"
-    header = f"💼 持倉損益 {arrow}${abs(total_pnl):,.0f}（{abs(total_pct):.1f}%）"
+    header = f"💼 持倉總損益 {arrow}${abs(total_pnl):,.0f}（{'+' if total_pct>=0 else ''}{total_pct:.1f}%）"
     return header + "\n" + "\n".join(lines)
 
 
-def _build_weekly_report(codes) -> str:
-    """週五：抓本週五交易日收盤價，計算週漲跌幅排行。"""
+def _build_weekly_report(prices: dict) -> str:
+    """週五：顯示持倉本週績效週報。"""
     today = date.today()
     if today.weekday() != 4:  # 只有週五
         return ""
-    try:
-        import urllib.request, json as _json
-        results = []
-        # 抓本週一到今天（最多5天）的收盤價
-        from twse_utils import HEADERS
-        # 用 STOCK_DAY_ALL 只能拿到最近一日，改抓個股月資料取本週
-        # 簡化版：從 STOCK_DAY_ALL 拿今日收盤，與5日前比較
-        day_all = _json.loads(
-            urllib.request.urlopen(
-                urllib.request.Request(
-                    "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
-                    headers=HEADERS
-                ), timeout=12
-            ).read()
-        )
-        stock_map = {d.get("Code", ""): d for d in day_all}
-
-        for code in codes:
-            d = stock_map.get(code)
-            if not d:
-                continue
-            try:
-                close = float(str(d.get("ClosingPrice", "0")).replace(",", ""))
-                # 用開盤價估算週初（簡化，實際可擴充為抓5日歷史）
-                open_price = float(str(d.get("OpeningPrice", close)).replace(",", ""))
-                # 改從 Change 欄位累積較準，這裡先用當週累計欄
-                week_chg = float(str(d.get("Change", "0")).replace(",", "").replace("+", "") or "0")
-                from twse_utils import STOCK_NAMES
-                name = STOCK_NAMES.get(code, code)
-                results.append((name, code, week_chg, close))
-            except Exception:
-                continue
-
-        if not results:
-            return ""
-        results.sort(key=lambda x: x[2], reverse=True)
-        lines = []
-        for name, code, chg, close in results:
-            arrow = "▲" if chg > 0 else ("▼" if chg < 0 else "－")
-            lines.append(f"  {name} {arrow}{abs(chg):.2f}元 收{close}")
-        return "📅 本週收盤排行\n" + "\n".join(lines)
-    except Exception as e:
-        logger.debug(f"週報失敗: {e}")
+    cfg = load_config()
+    holdings = cfg.get("holdings", {})
+    if not holdings:
+        holdings = {
+            "2312": {"cost": 36.55,  "shares": 3000},
+            "2449": {"cost": 282.91, "shares": 2000},
+            "3706": {"cost": 94.73,  "shares": 4000},
+            "6285": {"cost": 289.7,  "shares": 2000},
+            "6667": {"cost": 272.09, "shares": 2000},
+            "8033": {"cost": 144.55, "shares": 5000},
+        }
+    lines = []
+    total_pnl = 0
+    total_cost = 0
+    for code, hd in holdings.items():
+        cost = hd.get("cost", 0)
+        shares = hd.get("shares", 0)
+        p = prices.get(code)
+        if not p or not cost or not shares:
+            continue
+        pnl = (p["close"] - cost) * shares
+        pct = (p["close"] - cost) / cost * 100
+        total_pnl += pnl
+        total_cost += cost * shares
+        arrow = "▲" if pnl >= 0 else "▼"
+        lines.append(f"  {p['name']}({code}) {arrow}{'+' if pct>=0 else ''}{pct:.1f}% 收{p['close']}")
+    if not lines:
         return ""
+    total_pct = total_pnl / total_cost * 100 if total_cost else 0
+    arrow = "▲" if total_pnl >= 0 else "▼"
+    header = f"📅 本週持倉績效 {arrow}${abs(total_pnl):,.0f}（{'+' if total_pct>=0 else ''}{total_pct:.1f}%）"
+    return header + "\n" + "\n".join(lines)
+
+
+def check_stoploss_alerts(prices: dict) -> list:
+    """檢查持倉是否觸發停損停利，回傳警示訊息清單。"""
+    cfg = load_config()
+    holdings = cfg.get("holdings", {})
+    stoploss = cfg.get("stoploss", {})  # {"2312": {"stop": 32, "target": 48}, ...}
+    if not stoploss:
+        return []
+    alerts = []
+    for code, sl in stoploss.items():
+        p = prices.get(code)
+        if not p:
+            continue
+        price = p["close"]
+        name = p["name"]
+        stop = sl.get("stop")
+        target = sl.get("target")
+        if stop and price <= float(stop):
+            alerts.append(f"⚠️ 停損警示｜{name}({code}) 現價{price} ≤ 停損{stop}")
+        elif target and price >= float(target):
+            alerts.append(f"🎯 停利達標｜{name}({code}) 現價{price} ≥ 停利{target}")
+    return alerts
 
 
 def _build_today_events(codes) -> str:
@@ -221,10 +240,14 @@ def push_webapp(session: str = "收盤分析") -> bool:
     prices   = fetch_stock_prices(codes)
     us_line  = _fetch_us_summary()
     pnl_str  = _build_holding_pnl(prices)
-    weekly   = _build_weekly_report(codes)
+    weekly   = _build_weekly_report(prices)   # 週五才有內容
     # 今日重點事件（除權息）— 只在早盤推播時附上
     is_morning = "早盤" in session
+    is_close   = "收盤" in session
     today_events = _build_today_events(codes) if is_morning else ""
+
+    # 停損停利警示（收盤時檢查）
+    sl_alerts = check_stoploss_alerts(prices) if is_close else []
 
     # 組合 caption
     now = datetime.now().strftime("%m/%d %H:%M")
@@ -259,7 +282,11 @@ def push_webapp(session: str = "收盤分析") -> bool:
     if pnl_str:
         caption += f"\n\n{pnl_str}"
 
-    # 週報（週五）
+    # 停損停利警示
+    if sl_alerts:
+        caption += "\n\n🚨 價格警示\n" + "\n".join(f"  {a}" for a in sl_alerts)
+
+    # 週報（週五收盤）
     if weekly:
         caption += f"\n\n{weekly}"
 
@@ -273,6 +300,12 @@ def push_webapp(session: str = "收盤分析") -> bool:
         else:
             logger.error(f"✗ 推播失敗（已重試3次）→ {chat_id}")
             ok = False
+
+    # 若有停損停利警示，額外再發一則純文字訊息（讓手機通知更顯眼）
+    if sl_alerts and ok:
+        alert_msg = "🚨 台股警示\n" + "\n".join(sl_alerts)
+        push_alert(alert_msg)
+
     return ok
 
 

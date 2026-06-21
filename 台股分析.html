@@ -279,7 +279,14 @@ input[type=number]:focus{outline:none;border-color:var(--accent)}
         <button class="btn" onclick="renderPortfolio()">🔄 更新</button>
       </div>
       <!-- 總覽卡 -->
-      <div id="portfolioSummary" style="margin-bottom:18px"></div>
+      <div id="portfolioSummary" style="margin-bottom:14px"></div>
+      <!-- 持倉績效折線圖 -->
+      <div id="portfolioChartWrap" style="display:none;margin-bottom:14px">
+        <div class="panel" style="background:var(--panel2)">
+          <h3 style="margin-bottom:8px">📈 持倉報酬率走勢（近30日，相對成本）</h3>
+          <div id="portfolioChart" style="height:200px"></div>
+        </div>
+      </div>
       <!-- 個股卡片列表 -->
       <div id="portfolioCards"></div>
     </div>
@@ -1008,6 +1015,37 @@ function renderUsRelated(twCode){
 }
 
 /* ---------- 持倉損益 ---------- */
+/* ---- 持倉：買賣記錄 ---- */
+function _getTradeLog(code){ try{ return JSON.parse(localStorage.getItem('tw_tradelog_'+code))||[]; }catch(e){ return []; } }
+function _saveTradeLog(code,arr){ localStorage.setItem('tw_tradelog_'+code,JSON.stringify(arr)); }
+function addPortfolioTrade(code){
+  const d=document.getElementById('ptrade_date_'+code).value;
+  const act=document.getElementById('ptrade_act_'+code).value;
+  const pr=parseFloat(document.getElementById('ptrade_price_'+code).value);
+  const sh=parseInt(document.getElementById('ptrade_shares_'+code).value);
+  if(!d||!pr||!sh){ alert('請填寫完整'); return; }
+  const arr=_getTradeLog(code);
+  arr.unshift({date:d,action:act,price:pr,shares:sh});
+  arr.sort((a,b)=>b.date.localeCompare(a.date));
+  _saveTradeLog(code,arr);
+  renderPortfolio();
+}
+function delPortfolioTrade(code,idx){
+  const arr=_getTradeLog(code); arr.splice(idx,1); _saveTradeLog(code,arr); renderPortfolio();
+}
+function togglePortfolioSection(id){
+  const el=document.getElementById(id); if(!el) return;
+  el.style.display=el.style.display==='none'?'':'none';
+}
+function savePortfolioSL(code){
+  const stop=parseFloat(document.getElementById('psl_stop_'+code).value)||0;
+  const target=parseFloat(document.getElementById('psl_target_'+code).value)||0;
+  const sl=JSON.parse(localStorage.getItem('tw_stoploss')||'{}');
+  sl[code]={stop:stop||null,target:target||null};
+  localStorage.setItem('tw_stoploss',JSON.stringify(sl));
+  renderPortfolio();
+}
+
 function renderPortfolio(){
   const sumEl=document.getElementById('portfolioSummary');
   const cardsEl=document.getElementById('portfolioCards');
@@ -1024,8 +1062,7 @@ function renderPortfolio(){
   const codes=Object.keys(merged);
   if(!codes.length){
     sumEl.innerHTML='<div class="muted">尚未設定持倉。請在自選股頁面輸入成本與張數。</div>';
-    cardsEl.innerHTML='';
-    return;
+    cardsEl.innerHTML=''; return;
   }
 
   // 讀停損停利
@@ -1033,7 +1070,7 @@ function renderPortfolio(){
   try{ const v=JSON.parse(localStorage.getItem('tw_stoploss')); if(v) Object.assign(stoploss,v); }catch(e){}
 
   let totalCost=0, totalMktVal=0, totalPnl=0, havePrice=0;
-  let cardsHtml='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">';
+  let cardsHtml='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px">';
 
   codes.forEach(code=>{
     const hd=merged[code];
@@ -1043,61 +1080,103 @@ function renderPortfolio(){
 
     const d=state.map[code];
     const price=d?d.close:null;
-    const name=d?d.name:(code);
-    const pnl=price?(price-cost)*shares:null;
-    const pct=price?((price-cost)/cost*100):null;
-    const mktVal=price?(price*shares):null;
+    const name=d?d.name:code;
+    const pnl=price!=null?(price-cost)*shares:null;
+    const pct=price!=null?((price-cost)/cost*100):null;
+    const mktVal=price!=null?(price*shares):null;
 
     if(mktVal!==null){ totalCost+=cost*shares; totalMktVal+=mktVal; totalPnl+=pnl; havePrice++; }
 
     // 停損停利狀態
-    const sl=stoploss[code];
+    const sl=stoploss[code]||{};
     let slTag='';
-    if(sl&&price){
-      if(sl.stop&&price<=sl.stop) slTag='<span style="background:#ff4d4f;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;margin-left:6px">停損</span>';
-      else if(sl.target&&price>=sl.target) slTag='<span style="background:#52c41a;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;margin-left:6px">停利</span>';
+    if(price!=null){
+      if(sl.stop&&price<=sl.stop) slTag='<span style="background:#ff4d4f;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;margin-left:6px">⚠️ 停損</span>';
+      else if(sl.target&&price>=sl.target) slTag='<span style="background:#52c41a;color:#fff;border-radius:4px;padding:1px 6px;font-size:11px;margin-left:6px">🎯 停利</span>';
     }
 
-    const pnlColor=(pnl!==null)?(pnl>=0?'var(--up)':'var(--dn)'):'var(--muted)';
-    const pnlSign=(pnl!==null)?(pnl>=0?'+':''):'';
+    const pnlColor=pnl!=null?(pnl>=0?'var(--up)':'var(--dn)'):'var(--muted)';
     const priceDisp=price!=null?price.toFixed(2):'—';
     const pctDisp=pct!=null?((pct>=0?'+':'')+pct.toFixed(2)+'%'):'—';
-    const pnlDisp=pnl!=null?(pnlSign+(pnl/1000).toFixed(1)+'K'):'—';
+    const pnlDisp=pnl!=null?((pnl>=0?'+':'')+Math.round(pnl).toLocaleString()):'—';
     const mktValDisp=mktVal!=null?((mktVal/10000).toFixed(1)+'萬'):'—';
     const costTotal=(cost*shares/10000).toFixed(1);
 
-    cardsHtml+=`<div class="panel" style="background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;cursor:pointer" onclick="openStock('${code}')">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div>
+    // 買賣記錄
+    const logs=_getTradeLog(code);
+    const today=new Date().toISOString().slice(0,10);
+    let logRows='';
+    logs.forEach((l,i)=>{
+      const actColor=l.action==='買進'?'var(--up)':'var(--dn)';
+      logRows+=`<tr>
+        <td style="color:var(--muted);font-size:11px">${l.date}</td>
+        <td style="color:${actColor};font-weight:600">${l.action}</td>
+        <td>${l.price}</td><td>${l.shares.toLocaleString()}</td>
+        <td><span class="delbtn" onclick="delPortfolioTrade('${code}',${i})">✕</span></td>
+      </tr>`;
+    });
+
+    cardsHtml+=`<div style="background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+      <!-- 標題列 -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+        <div style="cursor:pointer" onclick="openStock('${code}')">
           <span style="font-weight:700;font-size:16px">${name}</span>
           <span style="color:var(--muted);font-size:12px;margin-left:6px">${code}</span>${slTag}
         </div>
         <div style="text-align:right">
-          <div style="font-size:20px;font-weight:700;color:${pnlColor}">${priceDisp}</div>
+          <div style="font-size:22px;font-weight:700;color:${pnlColor}">${priceDisp}</div>
           <div style="font-size:13px;color:${pnlColor}">${pctDisp}</div>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:12px;font-size:13px">
+      <!-- 數據格 -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:13px;margin-bottom:10px">
         <div><div style="color:var(--muted);font-size:11px">成本價</div><div>${cost}</div></div>
-        <div><div style="color:var(--muted);font-size:11px">持股（股）</div><div>${shares.toLocaleString()}</div></div>
+        <div><div style="color:var(--muted);font-size:11px">持股</div><div>${shares.toLocaleString()}</div></div>
         <div><div style="color:var(--muted);font-size:11px">成本市值</div><div>${costTotal}萬</div></div>
-        <div><div style="color:var(--muted);font-size:11px">現值</div><div>${mktValDisp}</div></div>
-        <div><div style="color:var(--muted);font-size:11px">損益（元）</div><div style="color:${pnlColor}">${pnlDisp}</div></div>
-        <div><div style="color:var(--muted);font-size:11px">報酬率</div><div style="color:${pnlColor}">${pctDisp}</div></div>
+        <div><div style="color:var(--muted);font-size:11px">現值市值</div><div>${mktValDisp}</div></div>
+        <div colspan="2"><div style="color:var(--muted);font-size:11px">損益</div><div style="color:${pnlColor};font-weight:600">${pnlDisp}元</div></div>
       </div>
-      ${sl?`<div style="margin-top:10px;font-size:11px;color:var(--muted)">停損 ${sl.stop||'—'}　停利 ${sl.target||'—'}</div>`:''}
+      <!-- 停損停利設定 -->
+      <div style="border-top:1px solid var(--border);padding-top:8px;margin-bottom:6px">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--muted)">停損</span>
+          <input id="psl_stop_${code}" type="number" step="0.5" value="${sl.stop||''}" placeholder="—" style="width:70px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:2px 6px;font-size:12px">
+          <span style="font-size:12px;color:var(--muted)">停利</span>
+          <input id="psl_target_${code}" type="number" step="0.5" value="${sl.target||''}" placeholder="—" style="width:70px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:2px 6px;font-size:12px">
+          <button class="btn" style="padding:2px 10px;font-size:12px" onclick="savePortfolioSL('${code}')">儲存</button>
+        </div>
+      </div>
+      <!-- 買賣記錄展開 -->
+      <div>
+        <span class="linkbtn" onclick="togglePortfolioSection('ptlog_${code}')">📝 交易記錄${logs.length?'（'+logs.length+'）':''}</span>
+        <div id="ptlog_${code}" style="display:none;margin-top:8px">
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;align-items:center">
+            <select id="ptrade_act_${code}" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 6px;font-size:12px">
+              <option>買進</option><option>賣出</option>
+            </select>
+            <input id="ptrade_date_${code}" type="date" value="${today}" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 6px;font-size:12px">
+            <input id="ptrade_price_${code}" type="number" step="0.01" placeholder="價格" style="width:70px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 6px;font-size:12px">
+            <input id="ptrade_shares_${code}" type="number" placeholder="股數" style="width:70px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 6px;font-size:12px">
+            <button class="btn" style="padding:3px 10px;font-size:12px" onclick="addPortfolioTrade('${code}')">新增</button>
+          </div>
+          ${logs.length?`<table style="width:100%;font-size:12px;border-collapse:collapse">
+            <tr style="color:var(--muted)"><th style="text-align:left">日期</th><th>動作</th><th>價格</th><th>股數</th><th></th></tr>
+            ${logRows}
+          </table>`:'<div style="color:var(--muted);font-size:12px">尚無記錄</div>'}
+        </div>
+      </div>
     </div>`;
   });
   cardsHtml+='</div>';
 
-  // 總覽
+  // 總覽卡
   const totalPct=totalCost?((totalPnl/totalCost)*100):0;
   const sumColor=totalPnl>=0?'var(--up)':'var(--dn)';
   const sumSign=totalPnl>=0?'+':'';
-  sumEl.innerHTML=`<div style="background:var(--panel2);border-radius:10px;padding:16px 20px;display:flex;flex-wrap:wrap;gap:20px;align-items:center">
+  sumEl.innerHTML=`<div style="background:var(--panel2);border-radius:12px;padding:16px 20px;display:flex;flex-wrap:wrap;gap:24px;align-items:center;margin-bottom:4px">
     <div>
       <div style="font-size:12px;color:var(--muted)">總損益</div>
-      <div style="font-size:28px;font-weight:700;color:${sumColor}">${sumSign}${(totalPnl/10000).toFixed(2)}萬</div>
+      <div style="font-size:28px;font-weight:700;color:${sumColor}">${sumSign}${Math.round(totalPnl).toLocaleString()}元</div>
     </div>
     <div>
       <div style="font-size:12px;color:var(--muted)">報酬率</div>
@@ -1111,9 +1190,44 @@ function renderPortfolio(){
       <div style="font-size:12px;color:var(--muted)">成本市值</div>
       <div style="font-size:18px;font-weight:600">${(totalCost/10000).toFixed(1)}萬</div>
     </div>
-    ${havePrice<codes.length?'<div style="color:var(--muted);font-size:12px">部分股票尚無今日報價（盤後才更新）</div>':''}
+    ${havePrice<codes.length?'<div style="color:var(--muted);font-size:12px">⚠️ 部分股票尚無報價</div>':''}
   </div>`;
   cardsEl.innerHTML=cardsHtml;
+
+  // 持倉報酬率折線圖（用 state.histCache 近30日資料）
+  _renderPortfolioChart(merged);
+}
+
+function _renderPortfolioChart(merged){
+  const wrap=document.getElementById('portfolioChartWrap');
+  const el=document.getElementById('portfolioChart');
+  if(!wrap||!el) return;
+  // 收集有歷史資料的持倉股
+  const seriesList=[];
+  Object.keys(merged).forEach(code=>{
+    const hd=merged[code]; const cost=parseFloat(hd.cost); if(!cost) return;
+    const hist=state.histCache&&state.histCache[code];
+    if(!hist||hist.length<2) return;
+    const last30=hist.slice(-30);
+    const data=last30.map(d=>{ const pct=((d[4]-cost)/cost*100); return [d[0], +pct.toFixed(2)]; });
+    const d=state.map[code];
+    seriesList.push({ name:(d?d.name:code), type:'line', smooth:true, data, symbolSize:0,
+      lineStyle:{width:2}, emphasis:{focus:'series'} });
+  });
+  if(!seriesList.length){ wrap.style.display='none'; return; }
+  wrap.style.display='';
+  const c=echarts.init(el,null,{renderer:'canvas'});
+  c.setOption({
+    backgroundColor:'transparent',
+    tooltip:{trigger:'axis',backgroundColor:'#1c2330',borderColor:'#2d333b',
+      textStyle:{color:'#e6edf3',fontSize:11},
+      formatter:params=>params[0].axisValue+'<br>'+params.map(p=>`${p.marker}${p.seriesName} ${p.value[1]>=0?'+':''}${p.value[1]}%`).join('<br>')},
+    legend:{top:0,textStyle:{color:'var(--muted)'},type:'scroll'},
+    xAxis:{type:'category',boundaryGap:false,axisLabel:{color:'#8b949e',fontSize:10},axisLine:{lineStyle:{color:'#444'}}},
+    yAxis:{type:'value',axisLabel:{color:'#8b949e',fontSize:10,formatter:v=>v+'%'},splitLine:{lineStyle:{color:'#2d333b'}}},
+    grid:{top:36,left:46,right:16,bottom:24},
+    series:seriesList
+  });
 }
 
 /* ---------- 分頁 ---------- */
