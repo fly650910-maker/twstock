@@ -1586,14 +1586,41 @@ function renderInstPanel(code){
       '</div></div>'+
     '</div>'+
   '</div>';
-  // 非同步載入法人歷史
-  if(state.useProxy && (!hist)) loadInstHistory(code);
+  // 非同步載入法人歷史（本機 proxy 或 corsproxy 皆可）
+  if(!hist) loadInstHistory(code);
 }
 async function loadInstHistory(code){
-  try{
-    const j=await fetchJson(LOCAL+'/api/inst_history?stockNo='+code+'&days=10',15000);
-    if(j&&j.data){ if(!state.instHistory) state.instHistory={}; state.instHistory[code]=j.data; renderInstPanel(code); }
-  }catch(e){}
+  let j=null;
+  // 1. 本機 proxy（最快）
+  if(state.useProxy){
+    try{ j=await fetchJson(LOCAL+'/api/inst_history?stockNo='+code+'&days=10',10000); }catch(e){}
+  }
+  // 2. TWSE openapi（有 CORS，但法人歷史端點不一定有）
+  if(!j){
+    try{ j=await fetchJson(API+'/fund/TWT38U?stockNo='+code,10000); }catch(e){}
+  }
+  // 3. corsproxy.io fallback（手機/GitHub Pages）
+  if(!j){
+    const rwdUrl='https://www.twse.com.tw/rwd/zh/fund/T86?startDate=&endDate=&stockNo='+code+'&response=json';
+    try{
+      const raw=await fetchJson(CORS+encodeURIComponent(rwdUrl),15000);
+      if(raw&&raw.stat==='OK'&&Array.isArray(raw.data)){
+        // 轉換格式：[日期,外資,外資自營,外陸,投信,自營(自行),自營(避),自營合計,合計]
+        j={data: raw.data.slice(-10).map(r=>({
+          '日期':r[0],
+          '外陸資買賣超股數(不含外資自營商)':parseFloat((r[3]||'0').replace(/,/g,'')),
+          '投信買賣超股數':parseFloat((r[4]||'0').replace(/,/g,'')),
+          '自營商買賣超股數(自行買賣)':parseFloat((r[5]||'0').replace(/,/g,'')),
+        }))};
+      }
+    }catch(e){}
+  }
+  if(j&&j.data){
+    if(!state.instHistory) state.instHistory={};
+    state.instHistory[code]=j.data;
+    renderInstPanel(code);
+    renderInstTrend(code);
+  }
 }
 
 function drawChart(rawHist,a){
@@ -2476,9 +2503,14 @@ async function loadMarginChart(code){
   const el=document.getElementById('marginChartPanel'); if(!el) return;
   try{
     // 抓個股融資融券歷史：TWSE /rwd/zh/marginTrading/STOCK_MARGIN_ACC
+    const now=new Date();
+    const ds=now.getFullYear()+String(now.getMonth()+1).padStart(2,'0')+String(now.getDate()).padStart(2,'0');
+    const rwdBase='https://www.twse.com.tw/rwd/zh/marginTrading/STOCK_MARGIN_ACC?stockNo='+code+'&startDate=&endDate='+ds+'&response=json';
     const urls=[
       state.useProxy ? LOCAL+'/api/margin_acc?stockNo='+code : null,
-      CORS+encodeURIComponent('https://www.twse.com.tw/rwd/zh/marginTrading/STOCK_MARGIN_ACC?stockNo='+code+'&response=json')
+      CORS+encodeURIComponent(rwdBase),
+      // allorigins 備援
+      'https://api.allorigins.win/raw?url='+encodeURIComponent(rwdBase)
     ].filter(Boolean);
     let j=null;
     for(const url of urls){
