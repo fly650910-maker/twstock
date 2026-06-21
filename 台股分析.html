@@ -1476,6 +1476,10 @@ async function showStock(s){
   loadRevenueChart(s.code).catch(()=>{});
   loadMarginChart(s.code).catch(()=>{});
   drawChart(data,a);
+  // 更新網址 hash 並顯示分享按鈕
+  history.replaceState(null,'','#'+s.code);
+  const _copyBtn=document.getElementById('copyLinkBtn');
+  if(_copyBtn) _copyBtn.style.display='';
 }
 function fund(l,v){ return '<div class="fund"><div class="label">'+l+'</div><div class="value">'+v+'</div></div>'; }
 function setPeriod(n){ state.period=n; if(state.current) showStock(state.current); }
@@ -1948,14 +1952,7 @@ function copyStockLink(){
     setTimeout(()=>btn.textContent=orig, 1800);
   }).catch(()=>{ prompt('複製此連結：',url); });
 }
-// 顯示個股後顯示分享按鈕並更新 hash
-const _origShowStock=showStock;
-async function showStock(s){
-  await _origShowStock.call(this,s);
-  history.replaceState(null,'','#'+s.code);
-  const btn=document.getElementById('copyLinkBtn');
-  if(btn) btn.style.display='';
-}
+// (showStock 分享按鈕邏輯已合入主函數)
 
 /* ═══════════════════════════════════════════════════════════════
    匯出 / 匯入自選股
