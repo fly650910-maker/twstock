@@ -1179,9 +1179,13 @@ function renderPortfolio(){
           <button class="btn" style="padding:2px 10px;font-size:12px" onclick="savePortfolioSL('${code}')">儲存</button>
         </div>
       </div>
+      <!-- 底部按鈕列 -->
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button class="btn" style="padding:3px 12px;font-size:12px" onclick="openStock('${code}')">📊 個股分析</button>
+        <span class="linkbtn" style="line-height:28px" onclick="togglePortfolioSection('ptlog_${code}')">📝 交易記錄${logs.length?'（'+logs.length+'）':''}</span>
+      </div>
       <!-- 買賣記錄展開 -->
       <div>
-        <span class="linkbtn" onclick="togglePortfolioSection('ptlog_${code}')">📝 交易記錄${logs.length?'（'+logs.length+'）':''}</span>
         <div id="ptlog_${code}" style="display:none;margin-top:8px">
           <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px;align-items:center">
             <select id="ptrade_act_${code}" style="background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:3px 6px;font-size:12px">
@@ -1398,7 +1402,22 @@ function findStock(q){
   return state.map[q] || state.stocks.find(s=>s.name===q) || state.stocks.find(s=>s.name.includes(q));
 }
 function doSearch(){ const s=findStock(document.getElementById('stockInput').value); if(s) showStock(s); else alert('找不到該股票，請確認代號或名稱'); }
-function openStock(code){ switchTab('stock'); const s=state.map[code]; if(s){ document.getElementById('stockInput').value=code; showStock(s); } }
+function openStock(code){
+  switchTab('stock');
+  document.getElementById('stockInput').value=code;
+  const s=state.map[code];
+  if(s){ showStock(s); return; }
+  // 資料還沒載入：先把 code 加入 watch（確保下次抓到），再嘗試直接搜尋
+  if(!state.watch.includes(code)) state.watch.push(code);
+  // 觸發 API 搜尋個股
+  const found=state.stocks.find(x=>x.code===code);
+  if(found) showStock(found);
+  else{
+    // 顯示 loading 提示，等資料到位
+    const el=document.getElementById('stockDetail');
+    if(el) el.innerHTML='<div class="panel"><div class="loading"><span class="spinner"></span>載入 '+code+' 中…</div></div>';
+  }
+}
 async function showStock(s){
   state.current=s;
   const p=pctOf(s);
