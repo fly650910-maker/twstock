@@ -46,7 +46,7 @@ def _in_window(target_hm, now: datetime, margin_min=10) -> bool:
     return abs(now_mins - target_mins) <= margin_min
 
 
-def detect_session(now: datetime = None) -> str | None:
+def detect_session(now: datetime = None):
     """
     根據當下時間與 config 的 push_times 自動偵測應推播的 session 名稱。
     若不在任何視窗內回傳 None（表示不需推播）。
