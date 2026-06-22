@@ -2215,10 +2215,10 @@ function saveSettings(){
     Object.assign(STOPLOSS, slObj);
     renderWatch();
     const msg=document.getElementById('settingMsg');
-    if(msg){ msg.style.color='var(--down)'; msg.textContent='✓ 設定已儲存！'; setTimeout(()=>{ msg.textContent=''; },3000); }
+    if(msg){ msg.style.color='var(--accent)'; msg.textContent='✓ 設定已儲存！'; setTimeout(()=>{ msg.textContent=''; },3000); }
   }catch(err){
     const msg=document.getElementById('settingMsg');
-    if(msg){ msg.style.color='var(--up)'; msg.textContent='✗ 儲存失敗：'+err.message; }
+    if(msg){ msg.style.color='var(--down)'; msg.textContent='✗ 儲存失敗：'+err.message; }
   }
 }
 // 啟動時從 localStorage 同步持倉到 HOLDINGS
